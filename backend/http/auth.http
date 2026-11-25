@@ -1,0 +1,40 @@
+### OneSlot 회원·로그인 API 테스트 (IntelliJ HTTP Client / VS Code REST Client)
+
+### 1. 아이디 중복확인
+GET http://localhost:8080/api/users/check-id?loginId=kbean7
+
+### 2. 회원가입
+POST http://localhost:8080/api/users
+Content-Type: application/json
+
+{
+  "loginId": "kbean7",
+  "password": "test1234!",
+  "name": "박경빈",
+  "email": "kbean7@example.com",
+  "phone": "010-1234-5678"
+}
+
+### 3. 검증 실패 예시 (400, errors 에 필드별 메시지)
+POST http://localhost:8080/api/users
+Content-Type: application/json
+
+{ "loginId": "a", "password": "1234", "name": "", "email": "wrong" }
+
+### 4. 로그인 → 응답의 accessToken 을 아래 @token 에 붙여 넣기
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{ "loginId": "kbean7", "password": "test1234!" }
+
+### 5. 내 정보 (토큰 필요)
+@token = 여기에_accessToken
+GET http://localhost:8080/api/users/me
+Authorization: Bearer {{token}}
+
+### 6. 토큰 없이 → 401
+GET http://localhost:8080/api/users/me
+
+### 7. 일반 회원 토큰으로 관리자 API → 403
+GET http://localhost:8080/api/admin/spaces
+Authorization: Bearer {{token}}
