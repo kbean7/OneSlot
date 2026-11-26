@@ -11,6 +11,11 @@ export default defineConfig({
         target: "http://localhost:8080",
         changeOrigin: true,
       },
+      // 공간 사진
+      "/uploads": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
     },
   },
 });

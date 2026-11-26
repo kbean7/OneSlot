@@ -32,6 +32,14 @@ public class Space {
     @Column(nullable = false)
     private Boolean active = true;
 
+    // 시간당 요금(원). 예약 금액 = 요금 × 이용 시간
+    @Column(name = "price_per_hour")
+    private Integer pricePerHour;
+
+    // 공간 소개
+    @Column(length = 1000)
+    private String description;
+
     // 낙관적 락을 위한 버전 관리
     @Version
     @Column(name = "version")

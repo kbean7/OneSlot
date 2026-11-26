@@ -50,7 +50,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/users/check-id").permitAll()
 
                         // 공간 조회는 로그인 없이 (메인·검색·상세)
-                        .requestMatchers(HttpMethod.GET, "/api/spaces/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/spaces", "/api/spaces/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/uploads/**").permitAll()
                         .requestMatchers("/api/test").permitAll()
 
                         // 관리자

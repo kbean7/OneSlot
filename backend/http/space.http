@@ -1,0 +1,60 @@
+### OneSlot 공간 API 테스트 (IntelliJ HTTP Client / VS Code REST Client)
+### 관리자 토큰: POST /api/auth/login 에 admin / ADMIN_PASSWORD 로 로그인해서 받은 accessToken
+@admin = 여기에_관리자_accessToken
+
+### 1. [관리자] 공간 등록 (운영 시간을 비우면 월~일 09:00~21:00)
+POST http://localhost:8080/api/admin/spaces
+Authorization: Bearer {{admin}}
+Content-Type: application/json
+
+{
+  "name": "A 회의실",
+  "location": "강남구",
+  "capacity": 6,
+  "pricePerHour": 15000,
+  "description": "빔프로젝터, 화이트보드 구비",
+  "operatingHours": [
+    { "dayOfWeek": 1, "openTime": "09:00", "closeTime": "21:00", "closed": false },
+    { "dayOfWeek": 2, "openTime": "09:00", "closeTime": "21:00", "closed": false },
+    { "dayOfWeek": 3, "openTime": "09:00", "closeTime": "21:00", "closed": false },
+    { "dayOfWeek": 4, "openTime": "09:00", "closeTime": "21:00", "closed": false },
+    { "dayOfWeek": 5, "openTime": "09:00", "closeTime": "21:00", "closed": false },
+    { "dayOfWeek": 6, "openTime": "10:00", "closeTime": "18:00", "closed": false },
+    { "dayOfWeek": 7, "closed": true }
+  ]
+}
+
+### 2. [관리자] 목록 (비활성 포함)
+GET http://localhost:8080/api/admin/spaces?keyword=회의실
+Authorization: Bearer {{admin}}
+
+### 3. [관리자] 비활성으로 숨기기
+PATCH http://localhost:8080/api/admin/spaces/1/active
+Authorization: Bearer {{admin}}
+Content-Type: application/json
+
+{ "active": false }
+
+### 4. [관리자] 사진 올리기 (form-data, 키 files)
+POST http://localhost:8080/api/admin/spaces/1/images
+Authorization: Bearer {{admin}}
+Content-Type: multipart/form-data; boundary=b
+
+--b
+Content-Disposition: form-data; name="files"; filename="room.png"
+Content-Type: image/png
+
+< ./room.png
+--b--
+
+### 5. 검색 (로그인 없이). 12/1(화) 10:00~12:00, 4명
+GET http://localhost:8080/api/spaces?date=2026-12-01&start=10:00&end=12:00&people=4&sort=price_asc
+
+### 6. 메인 인기 공간
+GET http://localhost:8080/api/spaces/popular
+
+### 7. 공간 상세
+GET http://localhost:8080/api/spaces/1
+
+### 8. 그날 운영 시간 (12/5 토 → 10:00~18:00, 12/6 일 → 휴무)
+GET http://localhost:8080/api/spaces/1/hours?date=2026-12-05
