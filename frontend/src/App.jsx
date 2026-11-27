@@ -37,6 +37,9 @@ function minutesFromClock(time) {
   const [h, m] = String(time).slice(0, 5).split(":").map(Number);
   return h * 60 + m;
 }
+const isOccupied = (b) =>
+  b.status === "PENDING_PAYMENT" || b.status === "CONFIRMED";
+
 function fromServerReservation(r) {
   const startAt = r.startAt;
   const endAt = r.endAt;
@@ -47,14 +50,15 @@ function fromServerReservation(r) {
     start: minutesFromClock(startAt.slice(11)),
     end: minutesFromClock(endAt.slice(11)),
     mine: true,
-    status: r.status,
+    status: r.effectiveStatus ?? r.status,
+    expiresAt: r.expiresAt ?? null,
     purpose: "예약",
   };
 }
 function combineBusySlots(slots, roomId, day, mine) {
   const sorted = [...(slots || [])]
     .map(slot => ({start: minutesFromClock(slot.start), end: minutesFromClock(slot.end)}))
-    .filter(slot => !mine.some(b => b.roomId === roomId && b.day === day && b.status !== "CANCELLED" && overlaps(slot, b)))
+    .filter(slot => !mine.some(b => b.roomId === roomId && b.day === day && isOccupied(b) && overlaps(slot, b)))
     .sort((a, b) => a.start - b.start);
   const merged = [];
   for (const slot of sorted) {
@@ -178,7 +182,7 @@ function ReservationTimeline({
     (b) =>
       b.roomId === room.id &&
       b.day === day &&
-      b.status !== "CANCELLED"
+      isOccupied(b)
   );
 
   const handleClick = (event) => {
@@ -313,7 +317,7 @@ export default function App() {
   const room = ROOMS.find((r) => r.id === roomId);
 
   const activeBookings = bookings.filter(
-    (b) => b.status !== "CANCELLED"
+    isOccupied
   );
 
   const myBookings = useMemo(
@@ -331,7 +335,7 @@ export default function App() {
   );
 
   const cancelledBookings = myServerBookings.filter(
-    (b) => b.status === "CANCELLED"
+    (b) => b.status === "CANCELLED" || b.status === "EXPIRED"
   );
 
   const visibleRooms = ROOMS.filter((r) => {
@@ -410,11 +414,12 @@ export default function App() {
     );
     setPurpose("팀 회의");
     setEditingBooking(null);
+    refreshBookings();
     setModalOpen(true);
   };
 
   const openEditReservation = (booking) => {
-    if (!["PENDING_PAYMENT", "CONFIRMED"].includes(booking.status)) {
+    if (booking.status !== "PENDING_PAYMENT") {
       showMessage("현재 상태에서는 예약을 변경할 수 없습니다.");
       return;
     }
@@ -1066,7 +1071,7 @@ export default function App() {
 
                         <button
                           className="small-outline"
-                          disabled={saving}
+                          disabled={saving || b.status !== "PENDING_PAYMENT"}
                           onClick={() => openEditReservation(b)}
                         >
                           예약 변경
@@ -1088,7 +1093,7 @@ export default function App() {
 
               {cancelledBookings.length > 0 && (
                 <div className="cancelled-section">
-                  <h3>취소한 예약</h3>
+                  <h3>취소·만료된 예약</h3>
 
                   {cancelledBookings.map((b) => (
                     <div
@@ -1109,7 +1114,7 @@ export default function App() {
                         ~
                         {toTime(b.end)}
                       </span>
-                      <strong>취소 완료</strong>
+                      <strong>{b.status === "EXPIRED" ? "예약 만료" : "취소 완료"}</strong>
                     </div>
                   ))}
                 </div>

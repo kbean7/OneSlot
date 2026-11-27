@@ -1,16 +1,15 @@
-
 package com.reservation.reservation.repository;
 
-import com.reservation.reservation.entity.Reservation;
-import com.reservation.reservation.entity.ReservationStatus;
+import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.time.LocalDateTime;
-import java.util.Collection;
-import java.util.List;
+import com.reservation.reservation.entity.Reservation;
+import com.reservation.reservation.entity.ReservationStatus;
 
 public interface ReservationRepository
         extends JpaRepository<Reservation, Long> {
@@ -19,10 +18,18 @@ public interface ReservationRepository
     List<Reservation> findByUserId(Long userId);
 
     // 2. 예약 생성 및 캘린더 조회 시 중복 검사
+    // 만료된 결제대기 예약 제외
     @Query("""
         SELECT r FROM Reservation r
         WHERE r.space.id = :spaceId
           AND r.status IN :statuses
+          AND (
+              r.status = com.reservation.reservation.entity.ReservationStatus.CONFIRMED
+              OR (
+                  r.status = com.reservation.reservation.entity.ReservationStatus.PENDING_PAYMENT
+                  AND r.expiresAt > CURRENT_TIMESTAMP
+              )
+          )
           AND r.startAt < :endAt
           AND r.endAt > :startAt
         ORDER BY r.startAt ASC
@@ -35,11 +42,19 @@ public interface ReservationRepository
     );
 
     // 3. 예약 변경 시 자기 자신을 제외하고 중복 검사
+    // 만료된 결제대기 예약 제외
     @Query("""
         SELECT r FROM Reservation r
         WHERE r.space.id = :spaceId
           AND r.id <> :reservationId
           AND r.status IN :statuses
+          AND (
+              r.status = com.reservation.reservation.entity.ReservationStatus.CONFIRMED
+              OR (
+                  r.status = com.reservation.reservation.entity.ReservationStatus.PENDING_PAYMENT
+                  AND r.expiresAt > CURRENT_TIMESTAMP
+              )
+          )
           AND r.startAt < :endAt
           AND r.endAt > :startAt
         ORDER BY r.startAt ASC

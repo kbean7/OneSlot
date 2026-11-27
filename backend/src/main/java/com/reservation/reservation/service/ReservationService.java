@@ -18,13 +18,6 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.ArrayList;
-import java.util.List;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ReservationService {
@@ -84,7 +77,8 @@ public class ReservationService {
             );
         }
 
-        // 이미 예약된 시간인지 확인
+        // 예약 시간 중복 검사
+        // 만료된 결제대기 예약은 Repository에서 제외
         List<Reservation> overlaps =
                 reservationRepository.findOverlappingReservations(
                         spaceId,
@@ -107,6 +101,8 @@ public class ReservationService {
         reservation.setStartAt(startAt);
         reservation.setEndAt(endAt);
         reservation.setStatus(ReservationStatus.PENDING_PAYMENT);
+
+        // 결제대기 유효시간 10분 설정
         reservation.setExpiresAt(LocalDateTime.now().plusMinutes(10));
 
         return reservationRepository.saveAndFlush(reservation);
@@ -157,31 +153,32 @@ public class ReservationService {
     @Transactional(readOnly = true)
     public AvailabilityResponse getAvailability(
             Long spaceId,
-            LocalDate date
-    ) {
+            LocalDate date) {
+
         if (spaceId == null || spaceId <= 0 || date == null) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "공간 ID와 날짜를 확인해 주세요."
             );
         }
-    
+
         Space space = spaceRepository.findById(spaceId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
                         "공간을 찾을 수 없습니다."
                 ));
-    
+
         if (!Boolean.TRUE.equals(space.getActive())) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "사용할 수 없는 공간입니다."
             );
         }
-    
-        LocalDateTime dayStart = date.atTime(9, 0);
-        LocalDateTime dayEnd = date.atTime(21, 0);
-    
+
+        LocalDateTime dayStart = date.atTime(OPEN_TIME);
+        LocalDateTime dayEnd = date.atTime(CLOSE_TIME);
+
+        // 확정 예약 및 유효한 결제대기 예약만 조회
         List<Reservation> reservations =
                 reservationRepository.findOverlappingReservations(
                         spaceId,
@@ -189,50 +186,53 @@ public class ReservationService {
                         dayEnd,
                         OCCUPIED_STATUSES
                 );
-    
+
         List<AvailabilityResponse.TimeSlot> availableSlots =
                 new ArrayList<>();
-    
+
         List<AvailabilityResponse.TimeSlot> reservedSlots =
                 new ArrayList<>();
-    
+
         LocalDateTime now = LocalDateTime.now();
-    
+
         // 09:00부터 21:00까지 10분 간격으로 확인
         LocalDateTime slotStart = dayStart;
-    
+
         while (slotStart.isBefore(dayEnd)) {
+
             LocalDateTime slotEnd = slotStart.plusMinutes(10);
-    
+
             boolean occupied = false;
-    
+
             for (Reservation reservation : reservations) {
-                // 구간이 겹치는 경우에만 예약 중
+
+                // 구간이 겹치는 경우에만 예약 중으로 판단
                 boolean overlap =
                         reservation.getStartAt().isBefore(slotEnd)
                         && reservation.getEndAt().isAfter(slotStart);
-    
+
                 if (overlap) {
                     occupied = true;
                     break;
                 }
             }
-    
+
             AvailabilityResponse.TimeSlot slot =
                     new AvailabilityResponse.TimeSlot(
                             slotStart.toLocalTime(),
                             slotEnd.toLocalTime()
                     );
-    
+
             if (occupied) {
                 reservedSlots.add(slot);
+
             } else if (slotStart.isAfter(now)) {
                 availableSlots.add(slot);
             }
-    
+
             slotStart = slotEnd;
         }
-    
+
         return new AvailabilityResponse(
                 spaceId,
                 date,
@@ -240,7 +240,7 @@ public class ReservationService {
                 reservedSlots
         );
     }
-    
+
     // ========================================
     // 5. 예약 변경
     // ========================================
@@ -294,7 +294,7 @@ public class ReservationService {
             );
         }
 
-        // 락 획득 후 예약 데이터 재조회
+        // 락 획득 후 예약 조회
         Reservation reservation =
                 reservationRepository.findById(reservationId)
                         .orElseThrow(() -> new ResponseStatusException(
@@ -309,15 +309,34 @@ public class ReservationService {
             );
         }
 
-        // 변경할 수 없는 예약 상태 검사
-        if (!OCCUPIED_STATUSES.contains(reservation.getStatus())) {
+        // PR #1 리뷰 반영
+        // 확정된 예약은 변경 불가
+        if (reservation.getStatus() == ReservationStatus.CONFIRMED) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "확정된 예약은 변경할 수 없습니다."
+            );
+        }
+
+        // 결제대기 상태에서만 예약 변경 가능
+        if (reservation.getStatus() != ReservationStatus.PENDING_PAYMENT) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "현재 상태에서는 예약을 변경할 수 없습니다."
             );
         }
 
+        // 결제대기 시간이 만료된 예약은 변경 불가
+        if (reservation.getExpiresAt() == null ||
+                !reservation.getExpiresAt().isAfter(LocalDateTime.now())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "결제 대기 시간이 만료된 예약입니다."
+            );
+        }
+
         // 자기 자신을 제외한 예약 시간 중복 검사
+        // 만료된 결제대기 예약은 Repository에서 제외
         List<Reservation> overlaps =
                 reservationRepository
                         .findOverlappingReservationsExcludingSelf(
@@ -344,18 +363,14 @@ public class ReservationService {
     }
 
     // ========================================
-    // 6. 예약 시간 공통 검증
-    // ========================================
-
-    // ========================================
-    // 예약 취소
+    // 6. 예약 취소
     // ========================================
 
     @Transactional
     public Reservation cancelReservation(
             Long reservationId,
-            Long userId
-    ) {
+            Long userId) {
+
         if (reservationId == null || reservationId <= 0 ||
                 userId == null || userId <= 0) {
             throw new ResponseStatusException(
@@ -373,7 +388,7 @@ public class ReservationService {
 
         Long spaceId = initialReservation.getSpace().getId();
 
-        // 예약 생성/변경과 동일한 공간에 비관적 락 적용
+        // 예약 생성 및 변경과 동일한 공간에 비관적 락 적용
         spaceRepository.findByIdForUpdate(spaceId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
@@ -387,6 +402,7 @@ public class ReservationService {
                                 "예약을 찾을 수 없습니다."
                         ));
 
+        // 본인 예약인지 확인
         if (!reservation.getUserId().equals(userId)) {
             throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
@@ -394,6 +410,7 @@ public class ReservationService {
             );
         }
 
+        // 결제대기 또는 확정 예약만 취소 가능
         if (!OCCUPIED_STATUSES.contains(reservation.getStatus())) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -406,69 +423,74 @@ public class ReservationService {
         return reservationRepository.saveAndFlush(reservation);
     }
 
+    // ========================================
+    // 7. 예약 시간 공통 검증
+    // ========================================
+
     private void validateReservationTime(
-        LocalDateTime startAt,
-        LocalDateTime endAt
-) {
-    if (startAt == null || endAt == null) {
-        throw new ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "시작 시간과 종료 시간을 입력해야 합니다."
-        );
+            LocalDateTime startAt,
+            LocalDateTime endAt) {
+
+        // 시작 및 종료 시간 필수 입력
+        if (startAt == null || endAt == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "시작 시간과 종료 시간을 입력해야 합니다."
+            );
+        }
+
+        // 시작 시간보다 종료 시간이 늦어야 함
+        if (!startAt.isBefore(endAt)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "종료 시간은 시작 시간보다 늦어야 합니다."
+            );
+        }
+
+        // 과거 시간 예약 불가
+        if (!startAt.isAfter(LocalDateTime.now())) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "지난 시간에는 예약할 수 없습니다."
+            );
+        }
+
+        // 같은 날짜 내에서만 예약 가능
+        if (!startAt.toLocalDate().equals(endAt.toLocalDate())) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "예약은 같은 날짜 안에서만 가능합니다."
+            );
+        }
+
+        // 시작 시간 10분 단위 검사
+        boolean validStart =
+                startAt.getMinute() % 10 == 0
+                && startAt.getSecond() == 0
+                && startAt.getNano() == 0;
+
+        // 종료 시간 10분 단위 검사
+        boolean validEnd =
+                endAt.getMinute() % 10 == 0
+                && endAt.getSecond() == 0
+                && endAt.getNano() == 0;
+
+        if (!validStart || !validEnd) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "예약 시간은 10분 단위여야 합니다."
+            );
+        }
+
+        // 운영시간 검사: 09:00 ~ 21:00
+        if (startAt.toLocalTime().isBefore(OPEN_TIME)
+                || !startAt.toLocalTime().isBefore(CLOSE_TIME)
+                || endAt.toLocalTime().isAfter(CLOSE_TIME)) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "예약 가능 시간은 09:00~21:00입니다."
+            );
+        }
     }
-
-    if (!startAt.isBefore(endAt)) {
-        throw new ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "종료 시간은 시작 시간보다 늦어야 합니다."
-        );
-    }
-
-    if (!startAt.isAfter(LocalDateTime.now())) {
-        throw new ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "지난 시간에는 예약할 수 없습니다."
-        );
-    }
-
-    if (!startAt.toLocalDate().equals(endAt.toLocalDate())) {
-        throw new ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "예약은 같은 날짜 안에서만 가능합니다."
-        );
-    }
-
-    boolean validStart =
-            startAt.getMinute() % 10 == 0
-            && startAt.getSecond() == 0
-            && startAt.getNano() == 0;
-
-    boolean validEnd =
-            endAt.getMinute() % 10 == 0
-            && endAt.getSecond() == 0
-            && endAt.getNano() == 0;
-
-    if (!validStart || !validEnd) {
-        throw new ResponseStatusException(
-                HttpStatus.BAD_REQUEST,
-                "예약 시간은 10분 단위여야 합니다."
-        );
-    }
-
-    LocalTime openTime = LocalTime.of(9, 0);
-    LocalTime closeTime = LocalTime.of(21, 0);
-
-    if (
-            startAt.toLocalTime().isBefore(openTime)
-            || !startAt.toLocalTime().isBefore(closeTime)
-            || endAt.toLocalTime().isAfter(closeTime)
-    ) {
- 
-        throw new ResponseStatusException(
-            HttpStatus.BAD_REQUEST,
-            "예약 가능 시간은 09:00~21:00입니다."
-    );
 }
-} // validateReservationTime 메서드 끝
-
-} // ReservationService 클래스 끝
